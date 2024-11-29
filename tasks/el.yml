@@ -1,10 +1,11 @@
 ---
-- name: el | Installing mdadm
+- name: el | Installing mdadm package
   yum:
     name: "mdadm"
     state: "present"
 
-- name: arrays | Setting distribution-specific facts
+- name: el | Setting distribution-specific facts
   set_fact:
-    update_initramfs: "dracut -f"
+    update_initramfs: "dracut -f /boot/initramfs-$(uname -r).img $(uname -r)"
     mdadm_conf: "/etc/mdadm.conf"
+    mdadm_conf_path: "/etc/mdadm"

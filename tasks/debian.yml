@@ -1,10 +1,10 @@
 ---
-- name: debian | Installing mdadm
+- name: debian | Installing mdadm package
   apt:
     name: "mdadm"
     state: "present"
 
-- name: arrays | Setting distribution-specific facts
+- name: debian | Setting distribution-specific facts
   set_fact:
     update_initramfs: "update-initramfs -u"
     mdadm_conf: "/etc/mdadm/mdadm.conf"
