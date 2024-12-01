@@ -3,6 +3,11 @@
   apt:
     name: "mdadm"
     state: "present"
+  vars:
+    needed_pkgs:
+      - mdadm
+      - gdisk
+      - fdisk
 
 - name: debian | Setting distribution-specific facts
   set_fact:

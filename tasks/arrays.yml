@@ -2,7 +2,10 @@
 # Tasks
 - name: Process current mdadm RAID array
   vars:
-      raid_array_item_item:
+      raid_array_item: {}
+      active_devices: []
+      spare_devices: []
+
   block:
     - name: Debug
       debug:
@@ -39,10 +42,46 @@
       debug:
         msg: "{{ array_check }}"
 
+    # Partitioning devices for RAID
+    - name: arrays | Creation of linux RAID partitions / GPT table
+      shell: "sgdisk -o -N1 -t1:fd00 {{ item }}"
+      with_items:
+        - "{{ raid_array_item.devices }}" 
+        - "{{ raid_array_item.spares }}" 
+      when:
+        - raid_array_item.state|lower == "present"
+        - array_check.rc != 0 # not found in '/proc/mdstat'
+
+    - name: arrays | Collect linux RAID partitions (active)
+      shell: "fdisk -l {{ item }} | grep ^{{ item }} | cut -d ' ' -f 1"
+      register: partition_check
+      with_items: "{{ raid_array_item.devices }}"
+
+    - name: arrays | Collect linux RAID partitions (active)
+      set_fact:
+        active_devices: "{{ active_devices + [ item.stdout ] }}"
+      with_items: "{{ partition_check.results }}"
+
+    - name: arrays | Collect linux RAID partitions (spare)
+      shell: "fdisk -l {{ item }} | grep ^{{ item }} | cut -d ' ' -f 1"
+      register: partition_check
+      with_items: "{{ raid_array_item.spares }}"
+
+    - name: arrays | Collect linux RAID partitions (spare)
+      set_fact:
+        spare_devices: "{{ spare_devices + [ item.stdout ] }}"
+      with_items: "{{ partition_check.results }}"
+
+    - name: Debug 'active/spare devices (linux RAID partitions)'
+      debug:
+        msg:
+          active_devices: "{{ active_devices }}"
+          spare_devices: "{{ spare_devices }}"
+
     # Creating mdadm RAID array
     # (We pass 'yes' in order to accept any questions prompted for 'yes|no')
     - name: arrays | Creating new RAID array
-      shell: "yes | mdadm --create {{ md_device }} --level={{ raid_array_item.level }} {% if raid_array_item.level != 1 %}--chunk={{ raid_array_item.chunk_size|default('512K')}}{% endif %} --metadata={{ raid_array_item.raid_metadata_version|default(1.2) }} --raid-devices={{ raid_array_item.devices|count }} {{ raid_array_item.devices|join(' ') }}"
+      shell: "yes | mdadm --create {{ md_device }} --level={{ raid_array_item.level }} {% if raid_array_item.level != 1 %}--chunk={{ raid_array_item.chunk_size|default('512K')}}{% endif %} --metadata={{ raid_array_item.raid_metadata_version|default(1.2) }} --raid-devices={{ active_devices|count }} {{ active_devices|join(' ') }}"
       register: "array_created"
       when:
         - raid_array_item.state|lower == "present"
@@ -55,7 +94,7 @@
         - raid_array_item.state|lower == "present"
         - raid_array_item.spares is defined
         - item.split('/dev/').1 not in array_check.stdout # not already a spare drive
-      with_items: "{{ raid_array_item.spares }}"
+      with_items: "{{ spare_devices }}"
 
     # Creating RAID array filesystem
     - name: arrays | Creating filesystem
