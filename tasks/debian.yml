@@ -1,8 +1,9 @@
 ---
 - name: debian | Installing mdadm package
   apt:
-    name: "mdadm"
+    name: "{{ item }}"
     state: "present"
+  with_items: "{{ needed_pkgs }}"
   vars:
     needed_pkgs:
       - mdadm
@@ -12,5 +13,6 @@
 - name: debian | Setting distribution-specific facts
   set_fact:
     update_initramfs: "update-initramfs -u"
+    setup_linux_raid: ""
     mdadm_conf: "/etc/mdadm/mdadm.conf"
     mdadm_conf_path: "/etc/mdadm"

@@ -2,9 +2,9 @@
 # Tasks
 - name: Process current mdadm RAID array
   vars:
-      raid_array_item: {}
-      active_devices: []
-      spare_devices: []
+      raid_array_item: {} # parameters for mdadm, mkfs and mount
+      active_devices: []  # block devices used for RAID array initialization
+      spare_devices: []   # added as spares
 
   block:
     - name: Debug
@@ -42,104 +42,96 @@
       debug:
         msg: "{{ array_check }}"
 
-    # Partitioning devices for RAID
-    - name: arrays | Creation of linux RAID partitions / GPT table
-      shell: "sgdisk -o -N1 -t1:fd00 {{ item }}"
-      with_items:
-        - "{{ raid_array_item.devices }}" 
-        - "{{ raid_array_item.spares }}" 
+    - name: array | CREATE NEW ARRAY
       when:
         - raid_array_item.state|lower == "present"
         - array_check.rc != 0 # not found in '/proc/mdstat'
 
-    - name: arrays | Collect linux RAID partitions (active)
-      shell: "fdisk -l {{ item }} | grep ^{{ item }} | cut -d ' ' -f 1"
-      register: partition_check
-      with_items: "{{ raid_array_item.devices }}"
+      block:
+        # RAID volumes setup on devices for RAID
+        - name: arrays | Creation of linux RAID partitions / GPT table
+          shell: "sgdisk -o -N1 -t1:fd00 {{ item }}"
+          with_items:
+            - "{{ raid_array_item.devices }}"
+            - "{{ raid_array_item.spares }}"
 
-    - name: arrays | Collect linux RAID partitions (active)
-      set_fact:
-        active_devices: "{{ active_devices + [ item.stdout ] }}"
-      with_items: "{{ partition_check.results }}"
+        # Volumes that were created
+        - name: arrays | Collect linux RAID partitions (active)
+          shell: "fdisk -l {{ item }} | grep ^{{ item }} | cut -d ' ' -f 1"
+          register: partition_check
+          with_items: "{{ raid_array_item.devices }}"
+        - set_fact:
+            active_devices: "{{ active_devices + [ item.stdout ] }}"
+          with_items: "{{ partition_check.results }}"
 
-    - name: arrays | Collect linux RAID partitions (spare)
-      shell: "fdisk -l {{ item }} | grep ^{{ item }} | cut -d ' ' -f 1"
-      register: partition_check
-      with_items: "{{ raid_array_item.spares }}"
+        - name: arrays | Collect linux RAID partitions (spare)
+          shell: "fdisk -l {{ item }} | grep ^{{ item }} | cut -d ' ' -f 1"
+          register: partition_check
+          with_items: "{{ raid_array_item.spares }}"
+        - set_fact:
+            spare_devices: "{{ spare_devices + [ item.stdout ] }}"
+          with_items: "{{ partition_check.results }}"
 
-    - name: arrays | Collect linux RAID partitions (spare)
-      set_fact:
-        spare_devices: "{{ spare_devices + [ item.stdout ] }}"
-      with_items: "{{ partition_check.results }}"
+        - name: Debug 'active/spare devices (linux RAID partitions)'
+          debug:
+            msg:
+              active_devices: "{{ active_devices }}"
+              spare_devices: "{{ spare_devices }}"
 
-    - name: Debug 'active/spare devices (linux RAID partitions)'
-      debug:
-        msg:
-          active_devices: "{{ active_devices }}"
-          spare_devices: "{{ spare_devices }}"
+        # Creating mdadm RAID array
+        # (We pass 'yes' in order to accept any questions prompted for 'yes|no')
+        - name: arrays | Creating new RAID array
+          shell: "yes | mdadm --create {{ md_device }} --level={{ raid_array_item.level }} {% if raid_array_item.level != 1 %}--chunk={{ raid_array_item.chunk_size|default('512K')}}{% endif %} --metadata={{ raid_array_item.raid_metadata_version|default(1.2) }} --raid-devices={{ active_devices|count }} {{ active_devices|join(' ') }}"
+          register: "array_created"
 
-    # Creating mdadm RAID array
-    # (We pass 'yes' in order to accept any questions prompted for 'yes|no')
-    - name: arrays | Creating new RAID array
-      shell: "yes | mdadm --create {{ md_device }} --level={{ raid_array_item.level }} {% if raid_array_item.level != 1 %}--chunk={{ raid_array_item.chunk_size|default('512K')}}{% endif %} --metadata={{ raid_array_item.raid_metadata_version|default(1.2) }} --raid-devices={{ active_devices|count }} {{ active_devices|join(' ') }}"
-      register: "array_created"
-      when:
-        - raid_array_item.state|lower == "present"
-        - array_check.rc != 0 # not found in '/proc/mdstat'
+        - name: arrays | Adding spare drives
+          shell: "yes | mdadm --add {{ md_device }} {{ item }}"
+          register: "spares_added"
+          when:
+            - raid_array_item.spares is defined
+            - item.split('/dev/').1 not in array_check.stdout # not already a spare drive
+          with_items: "{{ spare_devices }}"
 
-    - name: arrays | Adding spare drives
-      shell: "yes | mdadm --add {{ md_device }} {{ item }}"
-      register: "spares_added"
-      when:
-        - raid_array_item.state|lower == "present"
-        - raid_array_item.spares is defined
-        - item.split('/dev/').1 not in array_check.stdout # not already a spare drive
-      with_items: "{{ spare_devices }}"
+        # Creating RAID array filesystem
+        - name: arrays | Creating filesystem
+          filesystem:
+            fstype: "{{ raid_array_item.filesystem }}"
+            opts: "{{ raid_array_item.filesystem_opts | default(omit) }}"
+            dev: "/dev/{{ md_name }}"
+          when:
+              - raid_array_item.filesystem is defined
 
-    # Creating RAID array filesystem
-    - name: arrays | Creating filesystem
-      filesystem:
-        fstype: "{{ raid_array_item.filesystem }}"
-        opts: "{{ raid_array_item.filesystem_opts | default(omit) }}"
-        dev: "/dev/{{ md_name }}"
-      when:
-          - raid_array_item.state|lower == "present"
-          - raid_array_item.filesystem is defined
+        # Mounting RAID array filesystem and push '/etc/fstab' entry
+        - name: arrays | Mounting filesystem
+          mount:
+            name: "{{ raid_array_item.mountpoint }}"
+            src: "/dev/{{ md_name }}"
+            fstype: "{{ raid_array_item.filesystem }}"
+            state: "mounted"
+            opts: "{{ raid_array_item.mount_opts | default(omit) }}"
+          when:
+            - raid_array_item.filesystem is defined
+            - raid_array_item.mountpoint is defined
 
-    # Mounting RAID array filesystem and push '/etc/fstab' entry
-    - name: arrays | Mounting filesystem
-      mount:
-        name: "{{ raid_array_item.mountpoint }}"
-        src: "/dev/{{ md_name }}"
-        fstype: "{{ raid_array_item.filesystem }}"
-        state: "mounted"
-        opts: "{{ raid_array_item.mount_opts | default(omit) }}"
-      when:
-        - raid_array_item.state|lower == "present"
-        - raid_array_item.filesystem is defined
-        - raid_array_item.mountpoint is defined
+        # Capture the newly created RAID array details to append to 'mdadm.conf'
+        # in order to persist between reboots
+        - name: arrays | Capturing new RAID array details
+          command: "mdadm --detail --scan /dev/{{ md_name }}"
+          register: "array_details"
+          changed_when: false
 
-    # Capture the newly created RAID array details to append to 'mdadm.conf'
-    # in order to persist between reboots
-    - name: arrays | Capturing new RAID array details
-      command: "mdadm --detail --scan /dev/{{ md_name }}"
-      register: "array_details"
-      changed_when: false
+        - name: Debug 'array_details'
+          debug:
+            msg: "{{ array_details }}"
 
-    - name: Debug 'array_details'
-      debug:
-        msg: "{{ array_details }}"
-
-    # Updating mdadm.conf to make RAID persist across reboots
-    - name: arrays | Updating {{ mdadm_conf }}
-      lineinfile:
-        dest: "{{ mdadm_conf }}"
-        regexp: "^{{ item }}"
-        line: "{{ item }}"
-        state: "present"
-      with_items: '{{ array_details.stdout_lines }}'
-      when:
-        - raid_array_item.state|lower == "present"
+        # Updating mdadm.conf to make RAID persist across reboots
+        - name: arrays | Updating {{ mdadm_conf }}
+          lineinfile:
+            dest: "{{ mdadm_conf }}"
+            regexp: "^{{ item }}"
+            line: "{{ item }}"
+            state: "present"
+          with_items: '{{ array_details.stdout_lines }}'
 
     ## Unmounting raid arrays in preparation of destroying
     #- name: arrays | Unmounting Array(s)
