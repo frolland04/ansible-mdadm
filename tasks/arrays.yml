@@ -2,44 +2,44 @@
 # Tasks
 - name: Process current mdadm RAID array
   vars:
-      raid_array_item: {} # parameters for mdadm, mkfs and mount
-      active_devices: []  # block devices used for RAID array initialization
-      spare_devices: []   # added as spares
+    raid_array_item: {} # parameters for mdadm, mkfs and mount
+    active_devices: [] # block devices used for RAID array initialization
+    spare_devices: [] # added as spares
 
   block:
     - name: Debug
-      debug:
+      ansible.builtin.debug:
         msg:
-        - "**** Processing current mdadm RAID array object: ****"
-        - "{{ raid_array_item }}"
+          - "**** Processing current mdadm RAID array object: ****"
+          - "{{ raid_array_item }}"
 
     # Get actual block device name
     - name: arrays | Get actual device name
-      shell: "[ -b /dev/{{ raid_array_item.name }} ] && realpath /dev/{{ raid_array_item.name }} || echo /dev/{{ raid_array_item.name }}"
-      register: "device_check"
+      ansible.builtin.shell: "[ -b /dev/{{ raid_array_item.name }} ] && realpath /dev/{{ raid_array_item.name }} || echo /dev/{{ raid_array_item.name }}"
+      register: device_check
 
     # Get md device as /dev/XXX
-    - set_fact:
+    - ansible.builtin.set_fact:
         md_device: "{{ device_check.stdout }}"
 
     # Get md device as XXX
-    - set_fact:
+    - ansible.builtin.set_fact:
         md_name: "{{ md_device.split('/dev/').1 }}"
 
     - name: Debug 'md_device' and 'md_name'
-      debug:
+      ansible.builtin.debug:
         msg: "{{ md_device }}, {{ md_name }}"
 
     # Checking that this array exists
     - name: arrays | Checking status of RAID array from name
-      shell: "cat /proc/mdstat | grep {{ md_name }}"
-      register: "array_check"
+      ansible.builtin.shell: cat /proc/mdstat | grep {{ md_name }}
+      register: array_check
       changed_when: false
       failed_when: false
-      check_mode: no
+      check_mode: false
 
     - name: Debug 'array_check'
-      debug:
+      ansible.builtin.debug:
         msg: "{{ array_check }}"
 
     - name: array | CREATE NEW ARRAY
@@ -50,30 +50,30 @@
       block:
         # RAID volumes setup on devices for RAID
         - name: arrays | Creation of linux RAID partitions / GPT table
-          shell: "sgdisk -o -N1 -t1:fd00 {{ item }}"
+          ansible.builtin.shell: sgdisk -o -N1 -t1:fd00 {{ item }}
           with_items:
             - "{{ raid_array_item.devices }}"
             - "{{ raid_array_item.spares }}"
 
         # Volumes that were created
         - name: arrays | Collect linux RAID partitions (active)
-          shell: "fdisk -l {{ item }} | grep ^{{ item }} | cut -d ' ' -f 1"
+          ansible.builtin.shell: fdisk -l {{ item }} | grep ^{{ item }} | cut -d ' ' -f 1
           register: partition_check
           with_items: "{{ raid_array_item.devices }}"
-        - set_fact:
-            active_devices: "{{ active_devices + [ item.stdout ] }}"
+        - ansible.builtin.set_fact:
+            active_devices: "{{ active_devices + [item.stdout] }}"
           with_items: "{{ partition_check.results }}"
 
         - name: arrays | Collect linux RAID partitions (spare)
-          shell: "fdisk -l {{ item }} | grep ^{{ item }} | cut -d ' ' -f 1"
+          ansible.builtin.shell: fdisk -l {{ item }} | grep ^{{ item }} | cut -d ' ' -f 1
           register: partition_check
           with_items: "{{ raid_array_item.spares }}"
-        - set_fact:
-            spare_devices: "{{ spare_devices + [ item.stdout ] }}"
+        - ansible.builtin.set_fact:
+            spare_devices: "{{ spare_devices + [item.stdout] }}"
           with_items: "{{ partition_check.results }}"
 
         - name: Debug 'active/spare devices (linux RAID partitions)'
-          debug:
+          ansible.builtin.debug:
             msg:
               active_devices: "{{ active_devices }}"
               spare_devices: "{{ spare_devices }}"
@@ -81,12 +81,13 @@
         # Creating mdadm RAID array
         # (We pass 'yes' in order to accept any questions prompted for 'yes|no')
         - name: arrays | Creating new RAID array
-          shell: "yes | mdadm --create {{ md_device }} --level={{ raid_array_item.level }} {% if raid_array_item.level != 1 %}--chunk={{ raid_array_item.chunk_size|default('512K')}}{% endif %} --metadata={{ raid_array_item.raid_metadata_version|default(1.2) }} --raid-devices={{ active_devices|count }} {{ active_devices|join(' ') }}"
-          register: "array_created"
+          ansible.builtin.shell: yes | mdadm --create {{ md_device }} --level={{ raid_array_item.level }} {% if raid_array_item.level != 1 %}--chunk={{ raid_array_item.chunk_size|default('512K')}}{%
+            endif %} --metadata={{ raid_array_item.raid_metadata_version|default(1.2) }} --raid-devices={{ active_devices|count }} {{ active_devices|join(' ') }}
+          register: array_created
 
         - name: arrays | Adding spare drives
-          shell: "yes | mdadm --add {{ md_device }} {{ item }}"
-          register: "spares_added"
+          ansible.builtin.shell: yes | mdadm --add {{ md_device }} {{ item }}
+          register: spares_added
           when:
             - raid_array_item.spares is defined
             - item.split('/dev/').1 not in array_check.stdout # not already a spare drive
@@ -94,20 +95,20 @@
 
         # Creating RAID array filesystem
         - name: arrays | Creating filesystem
-          filesystem:
+          community.general.filesystem:
             fstype: "{{ raid_array_item.filesystem }}"
             opts: "{{ raid_array_item.filesystem_opts | default(omit) }}"
-            dev: "/dev/{{ md_name }}"
+            dev: /dev/{{ md_name }}
           when:
-              - raid_array_item.filesystem is defined
+            - raid_array_item.filesystem is defined
 
         # Mounting RAID array filesystem and push '/etc/fstab' entry
         - name: arrays | Mounting filesystem
-          mount:
+          ansible.posix.mount:
             name: "{{ raid_array_item.mountpoint }}"
-            src: "/dev/{{ md_name }}"
+            src: /dev/{{ md_name }}
             fstype: "{{ raid_array_item.filesystem }}"
-            state: "mounted"
+            state: mounted
             opts: "{{ raid_array_item.mount_opts | default(omit) }}"
           when:
             - raid_array_item.filesystem is defined
@@ -116,22 +117,22 @@
         # Capture the newly created RAID array details to append to 'mdadm.conf'
         # in order to persist between reboots
         - name: arrays | Capturing new RAID array details
-          command: "mdadm --detail --scan /dev/{{ md_name }}"
-          register: "array_details"
+          ansible.builtin.command: mdadm --detail --scan /dev/{{ md_name }}
+          register: array_details
           changed_when: false
 
         - name: Debug 'array_details'
-          debug:
+          ansible.builtin.debug:
             msg: "{{ array_details }}"
 
         # Updating mdadm.conf to make RAID persist across reboots
         - name: arrays | Updating {{ mdadm_conf }}
-          lineinfile:
+          ansible.builtin.lineinfile:
             dest: "{{ mdadm_conf }}"
-            regexp: "^{{ item }}"
+            regexp: ^{{ item }}
             line: "{{ item }}"
-            state: "present"
-          with_items: '{{ array_details.stdout_lines }}'
+            state: present
+          with_items: "{{ array_details.stdout_lines }}"
 
     ## Unmounting raid arrays in preparation of destroying
     #- name: arrays | Unmounting Array(s)

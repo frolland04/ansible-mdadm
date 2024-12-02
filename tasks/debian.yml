@@ -1,8 +1,8 @@
 ---
 - name: debian | Installing mdadm package
-  apt:
+  ansible.builtin.apt:
     name: "{{ item }}"
-    state: "present"
+    state: present
   with_items: "{{ needed_pkgs }}"
   vars:
     needed_pkgs:
@@ -11,8 +11,8 @@
       - fdisk
 
 - name: debian | Setting distribution-specific facts
-  set_fact:
-    update_initramfs: "update-initramfs -u"
+  ansible.builtin.set_fact:
+    update_initramfs: update-initramfs -u
     setup_linux_raid: ""
-    mdadm_conf: "/etc/mdadm/mdadm.conf"
-    mdadm_conf_path: "/etc/mdadm"
+    mdadm_conf: /etc/mdadm/mdadm.conf
+    mdadm_conf_path: /etc/mdadm

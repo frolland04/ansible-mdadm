@@ -1,34 +1,39 @@
 ---
-# tasks file for ansible-mdadm
+# tasks file for 'ansible-mdadm'
 
-- include_tasks: debian.yml
+- name: main | Specific tasks for Debian platforms
+  ansible.builtin.include_tasks: debian.yml
   when: ansible_facts.os_family == "Debian"
 
-- include_tasks: el.yml
+- name: main | Specific tasks for RHEL platforms
+  ansible.builtin.include_tasks: el.yml
   when: ansible_facts.os_family == "RedHat"
 
-- name: main | Ensure {{ mdadm_conf }}'s path exists
-  file:
+- name: main | Ensure path exists - {{ mdadm_conf }}
+  ansible.builtin.file:
     path: "{{ mdadm_conf_path }}"
     state: directory
   when: mdadm_conf_path is defined
 
-- name: main | Ensure {{ mdadm_conf }} file exists
-  copy:
+- name: main | Ensure file exists - {{ mdadm_conf }}
+  ansible.builtin.copy:
     content: ""
     dest: "{{ mdadm_conf }}"
-    force: no
+    force: false
 
-- include_tasks: wipe_disks.yml
+- name: main | Optional disk wiping
+  ansible.builtin.include_tasks: wipe_disks.yml
   when:
     - mdadm_force_wipe is defined
     - mdadm_force_wipe
 
-- include_tasks: arrays.yml
+- name: main | Process RAID array given an attributes block
+  ansible.builtin.include_tasks: arrays.yml
   loop: "{{ mdadm_arrays }}"
   loop_control:
     loop_var: raid_array_item
 
 # Updates initramfs archives in /boot
 - name: main | Updating initramfs
-  command: "{{ update_initramfs }}"
+  ansible.builtin.command: "{{ update_initramfs }}"
+  changed_when: false

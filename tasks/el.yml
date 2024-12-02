@@ -1,8 +1,8 @@
 ---
 - name: el | Installing mdadm package
-  yum:  
+  ansible.builtin.yum:
     name: "{{ item }}"
-    state: "present"
+    state: present
   with_items: "{{ needed_pkgs }}"
   vars:
     needed_pkgs:
@@ -11,8 +11,8 @@
       - sgdisk
 
 - name: el | Setting distribution-specific facts
-  set_fact:
-    update_initramfs: "dracut -f /boot/initramfs-$(uname -r).img $(uname -r)"
+  ansible.builtin.set_fact:
+    update_initramfs: dracut -f /boot/initramfs-$(uname -r).img $(uname -r)
     setup_linux_raid: ""
-    mdadm_conf: "/etc/mdadm.conf"
-    mdadm_conf_path: "/etc/mdadm"
+    mdadm_conf: /etc/mdadm.conf
+    mdadm_conf_path: /etc/mdadm
